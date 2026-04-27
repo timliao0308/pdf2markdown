@@ -10,6 +10,11 @@ venv/
 # IDE
 .vscode/
 
+# Obsidian: ignore mutable workspace state, keep stable config
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+
 # 機密或環境變數檔
 .env
 
