@@ -1,24 +1,20 @@
 # macOS 系統隱藏檔
 .DS_Store
 
-# 如果是 Python 專案
+# Python
 __pycache__/
 *.pyc
 venv/
 .venv/
 
-# 如果是 Node.js 專案
-node_modules/
-
-# IDE 相關設定檔 (例如 VS Code)
+# IDE
 .vscode/
 
 # 機密或環境變數檔
 .env
 
-# pdf檔案不需上傳
+# PDF 與圖片不上傳
 *.pdf
-
 *.jpg
 *.jpeg
 *.png
@@ -28,10 +24,7 @@ node_modules/
 *.webp
 *.tiff
 
+# 轉換出來的 markdown 與輸入 PDF
 *.md
-
-
-temp_pipeline/
 my_pdfs/
-output_md_marker/
-final_md_outputs/
+output_md_docling/
