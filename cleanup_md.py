@@ -1,16 +1,14 @@
-"""Clean up image-text bleed from docling markdown output.
+"""Clean up docling markdown output for Taiwanese tax PDFs.
 
 Targets the dominant cruft patterns we observed:
-- Slide footer "Proprietary + Confidential[l...]" appearing on its own line, as a
-  prefix, suffix, or even doubled inside a paragraph.
-- Standalone "Google Cloud" branding lines (when not preceded by content that
-  would make it part of a sentence).
-- Stray single-character lines like "/" or ":".
-- Leftover footer markers combined with brand: "Proprietary + Confidential Google Cloud".
+- Repeated page-header H2 titles (the same "## ..." appearing on every page,
+  often followed by boilerplate notice/numbered-list lines).
+- Stray spaces between CJK characters caused by PDF visual line-wrapping
+  (e.g. "兆豐國際商業銀 行股份有限公 司" -> "兆豐國際商業銀行股份有限公司").
+- Excessive blank lines.
 
-This is intentionally conservative — diagram labels and short single-word lines
-that *might* be image-text bleed are left alone, because they could also be
-legitimate slide headings or callouts.
+Conservative — does not touch table rows beyond CJK-space collapsing, and
+keeps every H2 the first time it appears.
 """
 
 import re
@@ -19,91 +17,67 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 TARGET_DIR = ROOT / "output_md_docling"
 
-# Footer / brand patterns we want to nuke.
-FOOTER_RE = re.compile(r"Proprietary\s*\+\s*Confidentiall*", re.IGNORECASE)
-BRAND_LINE_RE = re.compile(r"^Google Cloud$")
-STRAY_LINE_RE = re.compile(r"^[\W_]{1,3}$")  # "/", ":", "-", "—", "8 XA"-ish? No, that has letters.
-
-# Whole lines to remove outright (after trimming).
-WHOLE_LINE_REMOVE = [
-    # Slide footers / branding
-    re.compile(r"^Proprietary\s*\+\s*Confidentiall*\s*(Google Cloud)?\s*$", re.IGNORECASE),
-    re.compile(r"^Confidentiall*$", re.IGNORECASE),
-    re.compile(r"^Google Cloud$"),
-    # Stray punctuation lines
-    re.compile(r"^[/:\-—]$"),
-    # OCR truncations of "Google Cloud" header bar
-    re.compile(r"^o+gle Cloud(?:\s+(?:cons|Platform.*))?$", re.IGNORECASE),
-    re.compile(r"^=\s*\d+\s+o+gle Cloud Platform.*$", re.IGNORECASE),
-    re.compile(r"^ole\.cloud\.gooale.*$", re.IGNORECASE),
-    # Standalone UI labels often picked up from console screenshots
-    re.compile(r"^(SSH|Connect|External IP|Internal IP|Name\s*\^?|Zone)$"),
-    # Google Play / App Store badge text
-    re.compile(r"^(GET IT ON|Download on the|Google Play App Store|App Store|Google Play)$"),
-    # Bare IP addresses, optionally with "(nicO)" / "(nic0)" / "(nic1)" suffix
-    re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}(?:\s*\(nic[O0-9]+\))?$"),
-]
+CJK_RANGE = r"一-鿿㐀-䶿豈-﫿　-〿＀-￯"
+CJK_SPACE_RE = re.compile(rf"([{CJK_RANGE}])[ \t]+([{CJK_RANGE}])")
 
 
-def clean_line(line: str) -> str:
-    """Strip embedded footer markers from a content line.
+def collapse_cjk_spaces(text: str) -> str:
+    """Repeatedly collapse single spaces between two CJK chars.
 
-    Cases handled:
-      - "Proprietary + Confidential X..."   -> "X..."
-      - "...X Proprietary + Confidential"   -> "...X"
-      - "X Proprietary + Confidential Y"    -> "X Y" (collapses inner footer)
-      - "Proprietary + Confidential Google Cloud X" -> "X"
+    Applied repeatedly because a single regex pass only consumes one space
+    at a time (the second CJK char is needed to anchor the next match).
     """
-    # Remove "Proprietary + Confidential[l...] (Google Cloud)?" wherever it appears
-    cleaned = re.sub(
-        r"\bProprietary\s*\+\s*Confidentiall*\s*(?:Google Cloud)?\b",
-        "",
-        line,
-        flags=re.IGNORECASE,
-    )
-    # Collapse double spaces left behind
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
-    return cleaned
+    prev = None
+    while prev != text:
+        prev = text
+        text = CJK_SPACE_RE.sub(r"\1\2", text)
+    return text
+
+
+def remove_repeated_h2_blocks(text: str) -> str:
+    """Drop repeated H2 headers and the boilerplate that follows them.
+
+    A repeated H2 is any "## X" whose exact text already appeared earlier in
+    the file. When we see one, we skip it and every following non-substantive
+    line until we hit a table row, an image, or a *new* H2.
+    """
+    lines = text.split("\n")
+    seen: set[str] = set()
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("## "):
+            header = line.strip()
+            if header in seen:
+                i += 1
+                while i < len(lines):
+                    cur = lines[i].lstrip()
+                    if cur.startswith("|") or cur.startswith("!["):
+                        break
+                    if lines[i].startswith("## "):
+                        if lines[i].strip() in seen:
+                            i += 1
+                            continue
+                        break
+                    i += 1
+                continue
+            seen.add(header)
+        out.append(line)
+        i += 1
+    return "\n".join(out)
+
+
+def collapse_blank_lines(text: str) -> str:
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.rstrip() + "\n"
 
 
 def clean_text(text: str) -> str:
-    out_lines: list[str] = []
-    for raw in text.splitlines():
-        line = raw.rstrip()
-
-        # Drop if it matches any whole-line removal pattern.
-        if any(p.match(line.strip()) for p in WHOLE_LINE_REMOVE):
-            continue
-
-        # Image / heading lines: keep as-is.
-        if line.startswith("![") or line.startswith("#"):
-            out_lines.append(line)
-            continue
-
-        # Strip embedded footer markers from content lines.
-        if "Proprietary" in line or "Confidential" in line.lower():
-            cleaned = clean_line(line)
-            # If after cleaning the line became empty or trivial, skip.
-            if not cleaned or any(p.match(cleaned) for p in WHOLE_LINE_REMOVE):
-                continue
-            out_lines.append(cleaned)
-        else:
-            out_lines.append(line)
-
-    # Collapse 3+ blank lines to a single blank line, and trim trailing blanks.
-    result: list[str] = []
-    blank_run = 0
-    for ln in out_lines:
-        if ln.strip() == "":
-            blank_run += 1
-            if blank_run <= 1:
-                result.append("")
-        else:
-            blank_run = 0
-            result.append(ln)
-    while result and result[-1] == "":
-        result.pop()
-    return "\n".join(result) + "\n"
+    text = remove_repeated_h2_blocks(text)
+    text = collapse_cjk_spaces(text)
+    text = collapse_blank_lines(text)
+    return text
 
 
 def main() -> None:

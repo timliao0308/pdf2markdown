@@ -6,6 +6,8 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import ImageRefMode
 
+from cleanup_md import clean_text
+
 
 INPUT_FOLDER = Path("./my_pdfs")
 OUTPUT_FOLDER = Path("./output_md_docling")
@@ -53,8 +55,12 @@ def convert_pdf(converter: DocumentConverter, pdf_path: Path, output_dir: Path) 
     finally:
         os.chdir(cwd)
     md_path = final_dir / md_filename
+    raw = md_path.read_text(encoding="utf-8")
+    cleaned = clean_text(raw)
+    md_path.write_text(cleaned, encoding="utf-8")
     print(f"  saved markdown -> {md_path}")
     print(f"  pages: {len(doc.pages)}, pictures: {len(doc.pictures)}, tables: {len(doc.tables)}")
+    print(f"  cleanup: {len(raw.splitlines())} -> {len(cleaned.splitlines())} lines")
 
 
 def main() -> None:
